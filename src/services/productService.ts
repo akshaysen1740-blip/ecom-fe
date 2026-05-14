@@ -2,6 +2,7 @@ import { apiRequest } from "./axiosClient";
 
 export interface CreateProductDto {
   subcategoryId: number;
+  categoryId: number;
   name: string;
   description?: string;
   sku?: string;
@@ -19,7 +20,7 @@ export interface CreateProductResponse {
 }
 
 export const productService = {
-  list: (query = "") => apiRequest<unknown[]>(`products${query}`),
+  list: (query = "") => apiRequest<unknown[]>(`products`),
   getBySlug: (slug: string) =>
     apiRequest<unknown>(`products/${encodeURIComponent(slug)}`),
   create: (body: CreateProductDto) =>

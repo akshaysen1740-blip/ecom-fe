@@ -1,100 +1,94 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FolderTree, GitBranch, Layers3, Plus, RefreshCcw } from "lucide-react";
 import { api } from "@/services/api";
-import type { Category } from "@/services/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DataTable, ColumnDef } from "@/components/ui/data-table";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
-interface CategoryOption {
-  id: string;
+// ── Interfaces matching the exact API response ────────────────────────────────
+
+interface ApiCategory {
+  id: number;
   name: string;
+  slug: string;
+  description: string | null;
+  is_active: number;
+  created_by: number | null;
+  updated_by: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
-interface SubcategoryRecord {
-  id: string;
+interface ApiSubcategory {
+  id: number;
+  category_id: number;
   name: string;
-  description?: string | null;
-  categoryId: string;
+  slug: string;
+  description: string | null;
+  is_active: number;
+  created_by: number | null;
+  updated_by: number | null;
+  created_at: string;
+  updated_at: string;
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Safely extract an array from either `data` or the raw response */
+const toArray = <T>(res: unknown): T[] => {
+  if (Array.isArray(res)) return res as T[];
+  const wrapper = res as Record<string, unknown> | null;
+  if (wrapper && Array.isArray(wrapper.data)) return wrapper.data as T[];
+  return [];
+};
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 const AdminSubcategoriesPage = () => {
-  const [categories, setCategories] = useState<CategoryOption[]>([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState("");
+  const [categories, setCategories] = useState<ApiCategory[]>([]);
+  const [allSubcategories, setAllSubcategories] = useState<ApiSubcategory[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [subcategoryName, setSubcategoryName] = useState("");
   const [subcategoryDescription, setSubcategoryDescription] = useState("");
-  const [subcategories, setSubcategories] = useState<SubcategoryRecord[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [loadingSubcategories, setLoadingSubcategories] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  const normalizeId = (value: unknown) => {
-    if (typeof value === "number") return String(value);
-    if (typeof value === "string" && value.trim()) return value;
-    return "";
-  };
-
-  const normalizeCategories = (categoryData: Category[] | undefined) =>
-    (categoryData || [])
-      .filter((category) => category.is_active === 1 && Boolean(category.name?.trim()))
-      .map((category) => ({
-        id: String(category.id),
-        name: category.name,
-      }));
-
+  // ── Load all categories ─────────────────────────────────────────────────────
   const loadCategories = async () => {
     setLoadingCategories(true);
     try {
-      const data = await api.categories.list();
-      const normalized = normalizeCategories(data);
-      setCategories(normalized);
-      setSelectedCategoryId((current) => {
-        if (current && normalized.some((category) => category.id === current)) {
-          return current;
-        }
-        return normalized[0]?.id || "";
-      });
-    } catch (error) {
-      console.error("Failed to load categories", error);
+      const res = await api.categories.list();
+      const arr = toArray<ApiCategory>(res).filter((c) => c.is_active);
+      setCategories(arr);
+      // auto-select first category
+      if (arr.length > 0 && selectedCategoryId === null) {
+        setSelectedCategoryId(arr[arr.length - 1].id); // last = highest id by default
+      }
+    } catch (err) {
+      console.error("Failed to load categories", err);
       toast.error("Failed to load categories");
-      setCategories([]);
     } finally {
       setLoadingCategories(false);
     }
   };
 
-  const loadSubcategories = async (categoryId: string) => {
-    if (!categoryId) {
-      setSubcategories([]);
-      return;
-    }
-
+  // ── Load ALL subcategories at once, filter client-side ──────────────────────
+  const loadSubcategories = async () => {
     setLoadingSubcategories(true);
     try {
-      const data = await api.subcategories.list(categoryId);
-      const normalized = ((data as any[]) || [])
-        .map((subcategory, index) => ({
-          id: normalizeId(subcategory.id) || `subcategory-${index}`,
-          name:
-            (typeof subcategory.name === "string" && subcategory.name.trim()) ||
-            `Subcategory ${index + 1}`,
-          description:
-            typeof subcategory.description === "string" ? subcategory.description : null,
-          categoryId: normalizeId(subcategory.categoryId ?? subcategory.category_id) || categoryId,
-        }))
-        .filter((subcategory) => subcategory.id && subcategory.name);
-
-      setSubcategories(normalized);
-    } catch (error) {
-      console.error("Failed to load subcategories", error);
+      const res = await api.subcategories.list("");
+      const arr = toArray<ApiSubcategory>(res);
+      setAllSubcategories(arr);
+    } catch (err) {
+      console.error("Failed to load subcategories", err);
       toast.error("Failed to load subcategories");
-      setSubcategories([]);
     } finally {
       setLoadingSubcategories(false);
     }
@@ -102,24 +96,23 @@ const AdminSubcategoriesPage = () => {
 
   useEffect(() => {
     void loadCategories();
+    void loadSubcategories();
   }, []);
 
-  useEffect(() => {
-    if (selectedCategoryId) {
-      void loadSubcategories(selectedCategoryId);
-    } else {
-      setSubcategories([]);
-    }
-  }, [selectedCategoryId]);
+  // Client-side filter: only show subcategories for the selected category
+  const visibleSubcategories = useMemo(() => {
+    if (selectedCategoryId === null) return [];
+    return allSubcategories.filter((s) => s.category_id === selectedCategoryId);
+  }, [allSubcategories, selectedCategoryId]);
 
+  // ── Create subcategory ──────────────────────────────────────────────────────
   const handleCreateSubcategory = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (!selectedCategoryId) {
+    if (selectedCategoryId === null) {
       toast.error("Please select a category");
       return;
     }
-
     if (!subcategoryName.trim()) {
       toast.error("Please enter a subcategory name");
       return;
@@ -128,15 +121,14 @@ const AdminSubcategoriesPage = () => {
     setCreating(true);
     try {
       await api.subcategories.create({
-        categoryId: Number(selectedCategoryId),
+        categoryId: selectedCategoryId,
         name: subcategoryName.trim(),
         description: subcategoryDescription.trim() || undefined,
       });
-
       toast.success("Subcategory created successfully");
       setSubcategoryName("");
       setSubcategoryDescription("");
-      void loadSubcategories(selectedCategoryId);
+      void loadSubcategories();
     } catch (error: any) {
       toast.error(error.message || "Failed to create subcategory");
     } finally {
@@ -144,8 +136,41 @@ const AdminSubcategoriesPage = () => {
     }
   };
 
+  // ── Column definitions ──────────────────────────────────────────────────────
+  const columns: ColumnDef<ApiSubcategory>[] = [
+    {
+      header: "Subcategory",
+      className: "font-medium w-[35%]",
+      cell: ({ row }) => (
+        <div>
+          <div className="font-medium">{row.name}</div>
+          <div className="text-xs text-muted-foreground">{row.slug}</div>
+        </div>
+      ),
+    },
+    {
+      header: "Description",
+      className: "w-[40%]",
+      cell: ({ row }) => (
+        <span className="text-sm text-muted-foreground truncate block max-w-xs">
+          {row.description || "—"}
+        </span>
+      ),
+    },
+    {
+      header: "Status",
+      className: "w-[15%]",
+      cell: ({ row }) =>
+        row.is_active ? (
+          <Badge variant="secondary">Active</Badge>
+        ) : (
+          <Badge variant="outline">Inactive</Badge>
+        ),
+    },
+  ];
+
   const selectedCategoryName =
-    categories.find((category) => category.id === selectedCategoryId)?.name || "Category";
+    categories.find((c) => c.id === selectedCategoryId)?.name ?? "—";
 
   return (
     <div className="space-y-6">
@@ -158,6 +183,7 @@ const AdminSubcategoriesPage = () => {
         </p>
       </div>
 
+      {/* Stats */}
       <section className="grid gap-4 md:grid-cols-3">
         <Card className="border-border/60 shadow-sm">
           <CardContent className="flex items-center gap-4 p-5">
@@ -177,7 +203,7 @@ const AdminSubcategoriesPage = () => {
             </div>
             <div>
               <p className="text-xs font-medium text-muted-foreground">Loaded subcategories</p>
-              <p className="text-2xl font-bold">{subcategories.length}</p>
+              <p className="text-2xl font-bold">{visibleSubcategories.length}</p>
             </div>
           </CardContent>
         </Card>
@@ -195,6 +221,7 @@ const AdminSubcategoriesPage = () => {
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
+        {/* Create form */}
         <Card className="border-border/60 shadow-md">
           <CardHeader>
             <CardTitle>Create Subcategory</CardTitle>
@@ -207,21 +234,19 @@ const AdminSubcategoriesPage = () => {
               <div className="space-y-2">
                 <Label>Category</Label>
                 <Select
-                  value={selectedCategoryId}
-                  onValueChange={setSelectedCategoryId}
+                  value={selectedCategoryId !== null ? String(selectedCategoryId) : ""}
+                  onValueChange={(v) => setSelectedCategoryId(Number(v))}
                   disabled={loadingCategories || categories.length === 0}
                 >
                   <SelectTrigger>
                     <SelectValue
-                      placeholder={
-                        loadingCategories ? "Loading categories..." : "Select category"
-                      }
+                      placeholder={loadingCategories ? "Loading categories..." : "Select category"}
                     />
                   </SelectTrigger>
                   <SelectContent>
-                    {categories.map((category) => (
-                      <SelectItem key={category.id} value={category.id}>
-                        {category.name}
+                    {categories.map((cat) => (
+                      <SelectItem key={cat.id} value={String(cat.id)}>
+                        {cat.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -233,7 +258,7 @@ const AdminSubcategoriesPage = () => {
                 <Input
                   id="subcategory-name"
                   value={subcategoryName}
-                  onChange={(event) => setSubcategoryName(event.target.value)}
+                  onChange={(e) => setSubcategoryName(e.target.value)}
                   placeholder="Enter subcategory name"
                   required
                 />
@@ -244,7 +269,7 @@ const AdminSubcategoriesPage = () => {
                 <Textarea
                   id="subcategory-description"
                   value={subcategoryDescription}
-                  onChange={(event) => setSubcategoryDescription(event.target.value)}
+                  onChange={(e) => setSubcategoryDescription(e.target.value)}
                   placeholder="Enter subcategory description"
                   className="min-h-[120px]"
                 />
@@ -253,7 +278,7 @@ const AdminSubcategoriesPage = () => {
               <Button
                 type="submit"
                 className="w-full rounded-xl"
-                disabled={creating || !selectedCategoryId}
+                disabled={creating || selectedCategoryId === null}
               >
                 <Plus className="mr-2 h-4 w-4" />
                 {creating ? "Creating Subcategory..." : "Create Subcategory"}
@@ -262,6 +287,7 @@ const AdminSubcategoriesPage = () => {
           </CardContent>
         </Card>
 
+        {/* Subcategory table */}
         <Card className="border-border/60 shadow-md">
           <CardHeader className="flex flex-row items-start justify-between gap-4">
             <div>
@@ -272,56 +298,46 @@ const AdminSubcategoriesPage = () => {
             </div>
             <Button
               variant="outline"
-              onClick={() => void loadSubcategories(selectedCategoryId)}
-              disabled={!selectedCategoryId || loadingSubcategories}
+              onClick={() => void loadSubcategories()}
+              disabled={loadingSubcategories}
             >
               <RefreshCcw className="mr-2 h-4 w-4" />
               Refresh
             </Button>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Subcategory</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {!selectedCategoryId ? (
-                  <TableRow>
-                    <TableCell colSpan={3} className="text-center text-muted-foreground">
-                      Select a category to view subcategories
-                    </TableCell>
-                  </TableRow>
-                ) : loadingSubcategories ? (
-                  <TableRow>
-                    <TableCell colSpan={3} className="text-center text-muted-foreground">
-                      Loading subcategories...
-                    </TableCell>
-                  </TableRow>
-                ) : subcategories.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={3} className="text-center text-muted-foreground">
-                      No subcategories found for this category
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  subcategories.map((subcategory) => (
-                    <TableRow key={subcategory.id}>
-                      <TableCell className="font-medium">{subcategory.name}</TableCell>
-                      <TableCell className="max-w-md text-sm text-muted-foreground">
-                        {subcategory.description || "-"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">Mapped</Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+            {/* Category filter tabs */}
+            <div className="mb-4">
+              <Select
+                value={selectedCategoryId !== null ? String(selectedCategoryId) : ""}
+                onValueChange={(v) => setSelectedCategoryId(Number(v))}
+                disabled={loadingCategories}
+              >
+                <SelectTrigger className="w-full sm:w-64">
+                  <SelectValue placeholder="Filter by category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat.id} value={String(cat.id)}>
+                      {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <DataTable
+              columns={columns}
+              data={visibleSubcategories}
+              loading={loadingSubcategories}
+              searchKey="name"
+              searchPlaceholder="Search subcategories..."
+              emptyMessage={
+                selectedCategoryId === null
+                  ? "Select a category to view subcategories"
+                  : "No subcategories found for this category"
+              }
+            />
           </CardContent>
         </Card>
       </div>

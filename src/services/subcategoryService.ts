@@ -9,7 +9,7 @@ export interface CreateSubcategoryDto {
 export const subcategoryService = {
   list: (categoryId: string | number) =>
     apiRequest<unknown[]>(
-      `/subcategories?categoryId=${encodeURIComponent(String(categoryId))}`,
+      `/subcategories`,
     ),
   create: (body: CreateSubcategoryDto) =>
     apiRequest<unknown>("/subcategories", {

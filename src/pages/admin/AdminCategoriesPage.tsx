@@ -6,24 +6,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DataTable, ColumnDef } from "@/components/ui/data-table";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
-interface ProductRecord {
-  id: string;
-  category?: string | null;
-}
 
 const normalizeCategories = (categoryData: Category[] | undefined) =>
   (categoryData || []).filter(
-    (category) => category.is_active === 1 && Boolean(category.name?.trim()),
+    (category) => Boolean(category.is_active) && Boolean(category.name?.trim()),
   );
 
 const AdminCategoriesPage = () => {
   const [categories, setCategories] = useState<Category[]>([]);
-  const [products, setProducts] = useState<ProductRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [categoryName, setCategoryName] = useState("");
@@ -31,26 +26,17 @@ const AdminCategoriesPage = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [categoryResult, productResult] = await Promise.allSettled([
-      api.categories.list(),
-      api.products.list(),
-    ]);
-
-    if (categoryResult.status === "fulfilled") {
-      setCategories(normalizeCategories(categoryResult.value));
-    } else {
-      console.error("Failed to load category data", categoryResult.reason);
+    try {
+      const res = await api.categories.list();
+      const rawData = (res as any)?.data || res;
+      const arr: any[] = Array.isArray(rawData) ? rawData : [];
+      setCategories(normalizeCategories(arr));
+    } catch (error) {
+      console.error("Failed to load category data", error);
       toast.error("Failed to load categories");
+    } finally {
+      setLoading(false);
     }
-
-    if (productResult.status === "fulfilled") {
-      setProducts((productResult.value as ProductRecord[]) || []);
-    } else {
-      console.error("Failed to load product data for category stats", productResult.reason);
-      setProducts([]);
-    }
-
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -84,7 +70,7 @@ const AdminCategoriesPage = () => {
   };
 
   const catalogCategories = categories;
-  const totalMappedProducts = products.filter((product) => product.category).length;
+  const totalMappedProducts = categories.reduce((sum, c) => sum + (((c as any).product_count) || 0), 0);
 
   return (
     <div className="space-y-6">
@@ -127,7 +113,7 @@ const AdminCategoriesPage = () => {
             </div>
             <div>
               <p className="text-xs font-medium text-muted-foreground">Unmapped products</p>
-              <p className="text-2xl font-bold">{products.length - totalMappedProducts}</p>
+              <p className="text-2xl font-bold">0</p>
             </div>
           </CardContent>
         </Card>
@@ -187,44 +173,32 @@ const AdminCategoriesPage = () => {
             </Button>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Products</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {catalogCategories.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground">
-                      No categories found
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  catalogCategories.map((category) => {
-                    const productCount = products.filter(
-                      (product) => product.category === category.name,
-                    ).length;
-
-                    return (
-                      <TableRow key={category.id}>
-                        <TableCell className="font-medium">{category.name}</TableCell>
-                        <TableCell className="max-w-md text-sm text-muted-foreground">
-                          {category.description || "-"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary">Active</Badge>
-                        </TableCell>
-                        <TableCell>{productCount}</TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
+            <DataTable
+              columns={[
+                { header: "Category", accessorKey: "name", className: "font-medium" },
+                {
+                  header: "Description",
+                  cell: ({ row }) => (
+                    <span className="max-w-md text-sm text-muted-foreground">
+                      {row.description || "-"}
+                    </span>
+                  ),
+                },
+                {
+                  header: "Status",
+                  cell: () => <Badge variant="secondary">Active</Badge>,
+                },
+                {
+                  header: "Products",
+                  cell: ({ row }) =>
+                    (row as any).product_count ?? "-",
+                },
+              ]}
+              data={catalogCategories}
+              searchKey="name"
+              searchPlaceholder="Search categories..."
+              emptyMessage="No categories found"
+            />
           </CardContent>
         </Card>
       </div>

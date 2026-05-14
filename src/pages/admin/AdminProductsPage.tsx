@@ -1,17 +1,7 @@
 import { useEffect, useState } from "react";
-import {
-  Edit2,
-  Image as ImageIcon,
-  PackagePlus,
-  Plus,
-  Search,
-  Trash2,
-  Video,
-} from "lucide-react";
+import { PackagePlus, Video, Image as ImageIcon, Trash2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/services/api";
-import type { CreateProductDto } from "@/services/productService";
-import type { Subcategory } from "@/services/types";
 import { adminCategoryOptions } from "@/components/admin/admin-config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,84 +10,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-
-interface ProductVariant {
-  id?: string;
-  name: string;
-  value: string;
-  image_url: string;
-  media_type?: "image" | "video";
-}
-
-interface Product {
-  id: string;
-  name: string;
-  price: number;
-  description: string;
-  category: string;
-  shipping_type?: "free" | "flat" | "calculated";
-  shipping_amount?: number | null;
-  vendor_id?: string | null;
-  variants: ProductVariant[];
-  created_at: string;
-}
-
-interface Vendor {
-  id: string;
-  name: string;
-}
-
-interface CreateProductFormState {
-  categoryId: string;
-  subcategoryId: string;
-  name: string;
-  description: string;
-  sku: string;
-  price: string;
-  comparePrice: string;
-  stock: string;
-  thumbnailUrl: string;
-}
-
-const initialCreateProductForm: CreateProductFormState = {
-  categoryId: "",
-  subcategoryId: "",
-  name: "",
-  description: "",
-  sku: "",
-  price: "",
-  comparePrice: "",
-  stock: "",
-  thumbnailUrl: "",
-};
-
-interface CategoryOption {
-  id: string;
-  name: string;
-}
-
-interface SubcategoryOption extends Subcategory {}
+import { CreateProduct } from "./components/CreateProduct";
+import { ManageProducts, Product, ProductVariant } from "./components/ManageProducts";
+import { ManageVendors, Vendor } from "./components/ManageVendors";
 
 const AdminProductsPage = () => {
   const [activeTab, setActiveTab] = useState("create");
-  const [createProductForm, setCreateProductForm] =
-    useState<CreateProductFormState>(initialCreateProductForm);
-  const [categories, setCategories] = useState<CategoryOption[]>([]);
-  const [subcategories, setSubcategories] = useState<SubcategoryOption[]>([]);
-  const [loadingSubcategories, setLoadingSubcategories] = useState(false);
-  const [thumbnailPreviewUrl, setThumbnailPreviewUrl] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterCategory, setFilterCategory] = useState("all");
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [newVendorName, setNewVendorName] = useState("");
-  const [isCreatingVendor, setIsCreatingVendor] = useState(false);
+  
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingVariants, setEditingVariants] = useState<ProductVariant[]>([]);
   const [newVariantName, setNewVariantName] = useState("");
@@ -110,13 +36,20 @@ const AdminProductsPage = () => {
   const fetchProducts = async () => {
     setLoadingProducts(true);
     try {
-      const data = await api.products.list("?sort=-created_at");
-      const transformedProducts: Product[] = (data || []).map((product: any) => ({
+      const response = await api.products.list("?sort=-created_at");
+      const rawData = (response as any)?.data || response;
+      const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1").replace(/\/api\/v1$/, "");
+      const transformedProducts: Product[] = (rawData || []).map((product: any) => ({
         id: product.id,
         name: product.name,
         price: Number(product.price),
         description: product.description || "",
         category: product.category || "",
+        thumbnail_url: product.thumbnail_url
+          ? product.thumbnail_url.startsWith("http")
+            ? product.thumbnail_url
+            : `${API_BASE}${product.thumbnail_url}`
+          : null,
         shipping_type: product.shipping_type || "free",
         shipping_amount:
           product.shipping_amount != null ? Number(product.shipping_amount) : null,
@@ -125,7 +58,11 @@ const AdminProductsPage = () => {
           id: variant.id,
           name: variant.name,
           value: variant.value,
-          image_url: variant.image_url,
+          image_url: variant.image_url
+            ? variant.image_url.startsWith("http")
+              ? variant.image_url
+              : `${API_BASE}${variant.image_url}`
+            : variant.image_url,
           media_type: variant.media_type === "video" ? "video" : "image",
         })),
         created_at: product.created_at,
@@ -140,6 +77,16 @@ const AdminProductsPage = () => {
     }
   };
 
+  const fetchVendors = async () => {
+    try {
+      const response = await api.vendors.list();
+      const rawData = (response as any)?.data || response;
+      setVendors(rawData || []);
+    } catch (error) {
+      console.error("Error fetching vendors:", error);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === "manage" || activeTab === "vendors") {
       fetchProducts();
@@ -147,164 +94,8 @@ const AdminProductsPage = () => {
   }, [activeTab]);
 
   useEffect(() => {
-    const fetchVendors = async () => {
-      try {
-        const data = await api.vendors.list();
-        setVendors(data || []);
-      } catch (error) {
-        console.error("Error fetching vendors:", error);
-      }
-    };
-
     fetchVendors();
   }, []);
-
-  useEffect(() => {
-    const normalizeId = (value: unknown) => {
-      if (typeof value === "number") {
-        return String(value);
-      }
-
-      if (typeof value === "string" && value.trim()) {
-        return value;
-      }
-
-      return "";
-    };
-
-    const normalizeName = (value: unknown, fallback: string) => {
-      if (typeof value === "string" && value.trim()) {
-        return value;
-      }
-
-      return fallback;
-    };
-
-    const fetchCatalogMeta = async () => {
-      const categoryResult = await api.categories.list().then(
-        (value) => ({ status: "fulfilled" as const, value }),
-        (reason) => ({ status: "rejected" as const, reason }),
-      );
-
-      if (categoryResult.status === "fulfilled") {
-        const normalizedCategories = (categoryResult.value || [])
-          .filter((category) => category.is_active === 1)
-          .map((category, index) => ({
-            id: normalizeId(category.id),
-            name: normalizeName(category.name, `Category ${index + 1}`),
-          }))
-          .filter((category) => category.id);
-
-        setCategories(normalizedCategories);
-      } else {
-        console.error("Error fetching categories:", categoryResult.reason);
-        setCategories([]);
-        toast.error("Failed to load categories");
-      }
-    };
-
-    void fetchCatalogMeta();
-  }, []);
-
-  useEffect(() => {
-    const normalizeId = (value: unknown) => {
-      if (typeof value === "number") {
-        return String(value);
-      }
-
-      if (typeof value === "string" && value.trim()) {
-        return value;
-      }
-
-      return "";
-    };
-
-    const normalizeName = (value: unknown, fallback: string) => {
-      if (typeof value === "string" && value.trim()) {
-        return value;
-      }
-
-      return fallback;
-    };
-
-    const fetchSubcategories = async () => {
-      if (!createProductForm.categoryId) {
-        setSubcategories([]);
-        return;
-      }
-
-      setLoadingSubcategories(true);
-
-      try {
-        const data = await api.subcategories.list(createProductForm.categoryId);
-        const normalizedSubcategories = (data || [])
-          .map((subcategory: any, index) => ({
-            id: normalizeId(subcategory.id),
-            name: normalizeName(subcategory.name, `Subcategory ${index + 1}`),
-            categoryId: normalizeId(subcategory.categoryId ?? subcategory.category_id),
-          }))
-          .filter((subcategory) => subcategory.id);
-
-        setSubcategories(normalizedSubcategories);
-      } catch (error) {
-        console.error("Error fetching subcategories:", error);
-        setSubcategories([]);
-        toast.error("Failed to load subcategories");
-      } finally {
-        setLoadingSubcategories(false);
-      }
-    };
-
-    void fetchSubcategories();
-  }, [createProductForm.categoryId]);
-
-  useEffect(() => {
-    return () => {
-      if (thumbnailPreviewUrl) {
-        URL.revokeObjectURL(thumbnailPreviewUrl);
-      }
-    };
-  }, [thumbnailPreviewUrl]);
-
-  const availableSubcategories = subcategories;
-
-  const updateCreateProductForm = (
-    field: keyof CreateProductFormState,
-    value: string,
-  ) => {
-    setCreateProductForm((current) => {
-      if (field === "categoryId") {
-        return {
-          ...current,
-          categoryId: value,
-          subcategoryId: "",
-        };
-      }
-
-      return {
-        ...current,
-        [field]: value,
-      };
-    });
-  };
-
-  const handleThumbnailSelect = (file: File | null) => {
-    if (thumbnailPreviewUrl) {
-      URL.revokeObjectURL(thumbnailPreviewUrl);
-      setThumbnailPreviewUrl("");
-    }
-
-    if (!file) {
-      updateCreateProductForm("thumbnailUrl", "");
-      return;
-    }
-
-    const sanitizedName = file.name.replace(/\s+/g, "-");
-    const localPath = `/uploads/thumbnails/${Date.now()}-${sanitizedName}`;
-
-    setThumbnailPreviewUrl(URL.createObjectURL(file));
-    updateCreateProductForm("thumbnailUrl", localPath);
-  };
 
   const uploadMedia = async (
     file: File,
@@ -314,109 +105,6 @@ const AdminProductsPage = () => {
   ) => {
     const { url } = await api.media.upload(file, productId, variantName, mediaType);
     return url;
-  };
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const subcategoryId = Number(createProductForm.subcategoryId);
-    const price = Number(createProductForm.price);
-    const comparePrice = createProductForm.comparePrice
-      ? Number(createProductForm.comparePrice)
-      : undefined;
-    const stock = createProductForm.stock ? Number(createProductForm.stock) : undefined;
-
-    if (!createProductForm.categoryId) {
-      toast.error("Please select a category");
-      return;
-    }
-
-    if (!Number.isInteger(subcategoryId) || subcategoryId <= 0) {
-      toast.error("Please select a valid subcategory");
-      return;
-    }
-
-    if (!Number.isFinite(price) || price < 0) {
-      toast.error("Please enter a valid product price");
-      return;
-    }
-
-    if (comparePrice != null && (!Number.isFinite(comparePrice) || comparePrice < 0)) {
-      toast.error("Please enter a valid compare price");
-      return;
-    }
-
-    if (stock != null && (!Number.isInteger(stock) || stock < 0)) {
-      toast.error("Please enter a valid stock quantity");
-      return;
-    }
-
-    setSubmitting(true);
-
-    try {
-      const payload: CreateProductDto = {
-        subcategoryId,
-        name: createProductForm.name.trim(),
-        price,
-      };
-
-      if (createProductForm.description.trim()) {
-        payload.description = createProductForm.description.trim();
-      }
-
-      if (createProductForm.sku.trim()) {
-        payload.sku = createProductForm.sku.trim();
-      }
-
-      if (comparePrice != null) {
-        payload.comparePrice = comparePrice;
-      }
-
-      if (stock != null) {
-        payload.stock = stock;
-      }
-
-      if (createProductForm.thumbnailUrl.trim()) {
-        payload.thumbnailUrl = createProductForm.thumbnailUrl.trim();
-      }
-
-      const createdProduct = await api.products.create(payload);
-
-      toast.success(
-        createdProduct?.id != null
-          ? `Product created successfully with ID ${createdProduct.id}`
-          : createdProduct?.message || "Product created successfully!",
-      );
-      if (thumbnailPreviewUrl) {
-        URL.revokeObjectURL(thumbnailPreviewUrl);
-        setThumbnailPreviewUrl("");
-      }
-      setCreateProductForm(initialCreateProductForm);
-      setActiveTab("manage");
-      void fetchProducts();
-    } catch (error: any) {
-      toast.error(error.message || "Failed to create product");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleCreateVendor = async () => {
-    if (!newVendorName.trim()) {
-      toast.error("Please enter a vendor name");
-      return;
-    }
-
-    setIsCreatingVendor(true);
-    try {
-      const vendor = await api.vendors.create(newVendorName.trim());
-      setVendors((current) => [...current, vendor]);
-      setNewVendorName("");
-      toast.success("Vendor created successfully!");
-    } catch (error: any) {
-      toast.error(error.message || "Failed to create vendor");
-    } finally {
-      setIsCreatingVendor(false);
-    }
   };
 
   const handleEditProduct = (product: Product) => {
@@ -527,14 +215,9 @@ const AdminProductsPage = () => {
     }
   };
 
-  const filteredProducts = products.filter((product) => {
-    const matchesSearch =
-      product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      product.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory =
-      filterCategory === "all" || product.category === filterCategory;
-    return matchesSearch && matchesCategory;
-  });
+  const getVendorProductCount = (vendorId: string) => {
+    return products.filter((product) => product.vendor_id === vendorId).length;
+  };
 
   return (
     <div className="space-y-6">
@@ -567,313 +250,30 @@ const AdminProductsPage = () => {
             </TabsList>
 
             <TabsContent value="create" className="space-y-6 pt-6">
-              <form onSubmit={handleSubmit} className="space-y-6">
-                <div className="grid gap-6 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Category</Label>
-                    <Select
-                      value={createProductForm.categoryId}
-                      onValueChange={(value) => updateCreateProductForm("categoryId", value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {categories.map((category) => (
-                          <SelectItem key={category.id} value={category.id}>
-                            {category.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Subcategory</Label>
-                    <Select
-                      value={createProductForm.subcategoryId}
-                      onValueChange={(value) =>
-                        updateCreateProductForm("subcategoryId", value)
-                      }
-                      disabled={!createProductForm.categoryId || loadingSubcategories}
-                    >
-                      <SelectTrigger>
-                        <SelectValue
-                          placeholder={
-                            !createProductForm.categoryId
-                              ? "Select category first"
-                              : loadingSubcategories
-                              ? "Loading subcategories..."
-                              : availableSubcategories.length > 0
-                              ? "Select subcategory"
-                              : "No subcategories found"
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableSubcategories.map((subcategory) => (
-                          <SelectItem key={subcategory.id} value={subcategory.id}>
-                            {subcategory.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid gap-6 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="product-name">Product Name</Label>
-                    <Input
-                      id="product-name"
-                      value={createProductForm.name}
-                      onChange={(event) => updateCreateProductForm("name", event.target.value)}
-                      placeholder="Enter product name"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="product-sku">SKU</Label>
-                    <Input
-                      id="product-sku"
-                      value={createProductForm.sku}
-                      onChange={(event) => updateCreateProductForm("sku", event.target.value)}
-                      placeholder="Enter SKU"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid gap-6 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="product-price">Price</Label>
-                    <Input
-                      id="product-price"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={createProductForm.price}
-                      onChange={(event) => updateCreateProductForm("price", event.target.value)}
-                      placeholder="Enter price"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="compare-price">Compare Price</Label>
-                    <Input
-                      id="compare-price"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={createProductForm.comparePrice}
-                      onChange={(event) =>
-                        updateCreateProductForm("comparePrice", event.target.value)
-                      }
-                      placeholder="Enter compare price"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="product-stock">Stock</Label>
-                    <Input
-                      id="product-stock"
-                      type="number"
-                      min="0"
-                      step="1"
-                      inputMode="numeric"
-                      value={createProductForm.stock}
-                      onChange={(event) => updateCreateProductForm("stock", event.target.value)}
-                      placeholder="Enter stock quantity"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="thumbnail-file">Thumbnail Image</Label>
-                  <Input
-                    id="thumbnail-file"
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) =>
-                      handleThumbnailSelect(event.target.files?.[0] || null)
-                    }
-                  />
-                  <Input
-                    value={createProductForm.thumbnailUrl}
-                    placeholder="Generated local thumbnail path"
-                    readOnly
-                  />
-                  {thumbnailPreviewUrl ? (
-                    <div className="overflow-hidden rounded-xl border border-border/60 bg-secondary/30 p-2">
-                      <img
-                        src={thumbnailPreviewUrl}
-                        alt="Thumbnail preview"
-                        className="h-28 w-28 rounded-lg object-cover"
-                      />
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="product-description">Description</Label>
-                  <Textarea
-                    id="product-description"
-                    value={createProductForm.description}
-                    onChange={(event) =>
-                      updateCreateProductForm("description", event.target.value)
-                    }
-                    placeholder="Enter product description"
-                    className="min-h-[120px]"
-                  />
-                </div>
-
-                <div className="rounded-2xl border border-border/60 bg-secondary/30 p-4 text-sm text-muted-foreground">
-                  The create form sends only the generated thumbnail path in the payload.
-                  The selected image is previewed locally in the browser for now.
-                </div>
-
-                <Button type="submit" className="w-full" disabled={submitting}>
-                  {submitting ? "Creating Product..." : "Create Product"}
-                </Button>
-              </form>
+              <CreateProduct 
+                onProductCreated={() => {
+                  setActiveTab("manage");
+                  fetchProducts();
+                }} 
+              />
             </TabsContent>
 
             <TabsContent value="manage" className="space-y-6 pt-6">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="relative w-full flex-1">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search products..."
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-                <Select value={filterCategory} onValueChange={setFilterCategory}>
-                  <SelectTrigger className="w-full sm:w-56">
-                    <SelectValue placeholder="All Categories" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {adminCategoryOptions.map((category) => (
-                      <SelectItem key={category} value={category}>
-                        {category}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {loadingProducts ? (
-                <div className="py-8 text-center">Loading products...</div>
-              ) : filteredProducts.length === 0 ? (
-                <div className="py-8 text-center text-muted-foreground">No products found</div>
-              ) : (
-                <div className="overflow-hidden rounded-2xl border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Product</TableHead>
-                        <TableHead>Price</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Variants</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredProducts.map((product) => (
-                        <TableRow key={product.id}>
-                          <TableCell>
-                            <div>
-                              <div className="font-medium">{product.name}</div>
-                              <div className="line-clamp-2 text-sm text-muted-foreground">
-                                {product.description}
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="font-semibold">Rs. {product.price}</TableCell>
-                          <TableCell>{product.category || "-"}</TableCell>
-                          <TableCell>{product.variants.length}</TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleEditProduct(product)}
-                              >
-                                <Edit2 className="mr-1 h-4 w-4" />
-                                Edit
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => setProductToDelete(product.id)}
-                              >
-                                <Trash2 className="mr-1 h-4 w-4" />
-                                Delete
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
+              <ManageProducts 
+                products={products}
+                loading={loadingProducts}
+                onViewProduct={setViewingProduct}
+                onEditProduct={handleEditProduct}
+                onDeleteProduct={(id) => setProductToDelete(id)}
+              />
             </TabsContent>
 
             <TabsContent value="vendors" className="space-y-6 pt-6">
-              <div className="space-y-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <h3 className="text-lg font-semibold">Manage Vendors</h3>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <Input
-                      placeholder="New vendor name"
-                      value={newVendorName}
-                      onChange={(event) => setNewVendorName(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          handleCreateVendor();
-                        }
-                      }}
-                      className="sm:w-56"
-                    />
-                    <Button
-                      onClick={handleCreateVendor}
-                      disabled={isCreatingVendor || !newVendorName.trim()}
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add Vendor
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="overflow-hidden rounded-2xl border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Vendor Name</TableHead>
-                        <TableHead>Products Count</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {vendors.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={2} className="text-center text-muted-foreground">
-                            No vendors yet. Create one to get started.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        vendors.map((vendor) => (
-                          <TableRow key={vendor.id}>
-                            <TableCell className="font-medium">{vendor.name}</TableCell>
-                            <TableCell>
-                              {products.filter((product) => product.vendor_id === vendor.id).length}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
+              <ManageVendors 
+                vendors={vendors}
+                onVendorCreated={fetchVendors}
+                getVendorProductCount={getVendorProductCount}
+              />
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -1095,6 +495,93 @@ const AdminProductsPage = () => {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!viewingProduct} onOpenChange={(open) => !open && setViewingProduct(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Product Details</DialogTitle>
+          </DialogHeader>
+          {viewingProduct && (
+            <div className="space-y-4">
+              {/* Thumbnail */}
+              {viewingProduct.thumbnail_url && (
+                <div className="flex justify-center">
+                  <img
+                    src={viewingProduct.thumbnail_url}
+                    alt={viewingProduct.name}
+                    className="h-48 w-full rounded-xl object-cover border bg-muted"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                </div>
+              )}
+              <div>
+                <Label className="text-muted-foreground">Product Name</Label>
+                <div className="font-medium">{viewingProduct.name}</div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <Label className="text-muted-foreground">Price</Label>
+                  <div className="font-medium">Rs. {viewingProduct.price}</div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Category</Label>
+                  <div className="font-medium">{viewingProduct.category || "-"}</div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Variants</Label>
+                  <div className="font-medium">{viewingProduct.variants.length}</div>
+                </div>
+              </div>
+              <div>
+                <Label className="text-muted-foreground">Description</Label>
+                <div className="text-sm mt-1 bg-muted/50 p-3 rounded-lg border">
+                  {viewingProduct.description || "No description provided."}
+                </div>
+              </div>
+              {viewingProduct.variants.length > 0 && (
+                <div>
+                  <Label className="text-muted-foreground">Variants</Label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-2">
+                    {viewingProduct.variants.map((variant) => (
+                      <div key={variant.id} className="rounded-xl border bg-muted/30 overflow-hidden">
+                        {variant.media_type === "video" ? (
+                          <video
+                            src={variant.image_url}
+                            className="h-28 w-full object-cover"
+                            muted
+                            playsInline
+                            onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+                            onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+                          />
+                        ) : (
+                          <img
+                            src={variant.image_url}
+                            alt={variant.name}
+                            className="h-28 w-full object-cover bg-muted"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = "";
+                              (e.target as HTMLImageElement).className = "h-28 w-full flex items-center justify-center bg-muted";
+                            }}
+                          />
+                        )}
+                        <div className="p-2">
+                          <div className="font-medium text-sm truncate">{variant.name}</div>
+                          <div className="text-xs text-muted-foreground truncate">{variant.value}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewingProduct(null)}>
               Close
             </Button>
           </DialogFooter>
